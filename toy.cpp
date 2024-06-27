@@ -267,5 +267,70 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
 }
 
 
+// BinopPrecedence - This holds the precedence for each binary operator defined.
+static std::map<char, int> BinopPrecedence;
+
+// GetTokPrecedence - Get the precedence of the pending binary operator token 
+static int GetTokPrecedence() {
+	if (!isascii(CurTok))
+		return -1;
+	
+	// Make usre it's a declared binop
+	int TokPrec = BinopPrecedence[CurTok];
+	if (TokPrec <= 0) return -1;
+	return TokPrec;
+}
 
 
+
+// binoprhs
+// ::= ('+', primary)*
+static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec, std::unique_ptr<ExprAST> LHS) {
+	// If this is a binop, find its precedence 
+	while (true) {
+		int TokPrec = GetTokPrecedence();
+
+		// If this is a binop that binds as least as tightly as the current binop,
+		// consume it, otherwise we are done 
+		if (TokPrec < ExprPrec)
+			return LHS;
+
+		// Okay, we know this is a binop.
+		int BinOp = CurTok;
+		getNextToken(); // eat binop 
+		
+
+		// Parse the primary expression after the binary operator 
+		auto RHS = ParsePrimary();
+		if (!RHS) 
+			return nullptr;
+		
+		// We now need to check which side the binary op binds less tightly with 
+		// If the next operator has higher precedence than the current BinOP, then let it take the RHS as its LHS
+		// E.g. If we have parsed a + b so far, we might have "a + b * c", so the parser looks ahead to see if there's another
+		// operator after b. If that operator has higher precedence (in this case it does) it takes the curren RHS as its LHS 
+		// So we end up with a + (b * c)
+		int NextPrec = GetTokPrecedence();
+		if (TokPrec < NextPrec) {
+			RHS = ParseBinOpRHS(TokPrec + 1, std::move(RHS));
+			if (!RHS)
+				return nullptr;
+		}
+
+		// We merge the LHS and RHS together to form our binary expression
+		// This would convert "a+b+" to (a+b) and execute the next loop iteration with the trailing "+" as the current token
+		LHS = std::make_unique<BinaryExprAST>(BinOp, std::move(LHS), std::move(RHS));
+	}
+}
+
+
+// expression 
+//	::= primary binorphs
+//
+static std::unique_ptr<ExprAST> ParseExpression() {
+	auto LHS = ParsePrimary();
+	if (!LHS) 
+		return nullptr;
+	
+	return ParseBinOpRHS(0, std::move(LHS));
+}
