@@ -1,3 +1,14 @@
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Verifier.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -8,6 +19,8 @@
 #include <utility>
 #include <vector>
 
+
+using namespace llvm;
 
 enum token {
 	tok_eof = -1,
@@ -83,10 +96,10 @@ static int gettok()
 
 // We are using recursive descen parsing where every function/object represents a non-terminal from our grammar (fuck you PLD)
 // ExprAST - Base class for all expression nodes
-
+// Includes virtual codegen methods
 class ExprAST {
 public:
-	virtual ~ExprAST() = default; // default constructor for the expression object 
+	virtual ~ExprAST() = default; // default constructor for the expression object
 };
 
 // NumberExprAST - Expression class for numeric literals like "1.0"
@@ -94,7 +107,7 @@ class NumberExprAST : public ExprAST {
 	double Val;
 
 public:
-	NumberExprAST(double val) : Val(Val) {}
+	NumberExprAST(double Val) : Val(Val) {}
 };
 
 
@@ -466,3 +479,8 @@ int main() {
 
   return 0;
 }
+
+
+
+// Codegen: Transforming the AST into LLVM IR (Intermediate Representation)
+
