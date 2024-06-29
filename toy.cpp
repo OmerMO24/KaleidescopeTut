@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <llvm-18/llvm/IR/Value.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -97,9 +98,11 @@ static int gettok()
 // We are using recursive descen parsing where every function/object represents a non-terminal from our grammar (fuck you PLD)
 // ExprAST - Base class for all expression nodes
 // Includes virtual codegen methods
+// The Value class represents an SSA register they're cool check them out.
 class ExprAST {
 public:
 	virtual ~ExprAST() = default; // default constructor for the expression object
+	virtual Value *codegen() = 0;
 };
 
 // NumberExprAST - Expression class for numeric literals like "1.0"
@@ -108,6 +111,7 @@ class NumberExprAST : public ExprAST {
 
 public:
 	NumberExprAST(double Val) : Val(Val) {}
+	virtual Value *codegen() override;
 };
 
 
@@ -118,6 +122,7 @@ class VariableExprAST : public ExprAST {
 
 public:
 	VariableExprAST(const std::string &Name) : Name(Name) {}
+	virtual Value *codegen() override;
 };
 
 // BinaryExprAST - Expression calss for a binary operator e.g. +, *, /, ==
@@ -129,6 +134,7 @@ class BinaryExprAST : public ExprAST {
 public:
 		BinaryExprAST(char Op, std::unique_ptr<ExprAST> LHS, std::unique_ptr<ExprAST> RHS) :
 			Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {}
+		virtual Value *codegen() override;
 };
 
 
@@ -141,6 +147,7 @@ class CallExprAST : public ExprAST {
 public: 
 	CallExprAST(const std::string &Callee, std::vector<std::unique_ptr<ExprAST>> Args) : 
 		Callee(Callee), Args(std::move(Args)) {}
+	virtual Value *codegen() override;
 };
 
 // PrototypeAST - This class represents the "prototype" for a function,
@@ -484,3 +491,86 @@ int main() {
 
 // Codegen: Transforming the AST into LLVM IR (Intermediate Representation)
 
+// LogError used to report errors during code generation (similar to how we reported errors during parsing)
+static std::unique_ptr<LLVMContext> TheContext; // Needed to pass into APIs that require it 
+static std::unique_ptr<IRBuilder<>> Builder; // helper that makes it easy to generate LLVM instructions 
+static std::unique_ptr<Module> TheModule; // Contains functions and global variables; Owns memory for all IR generated
+static std::map<std::string, Value *> NamedValues; // Keeps tracks of values defined in current scope and their LLVM representation 
+												   // Essentially a symbol table for the code
+
+Value *LogErrorV(const char *Str) {
+	LogError(Str);
+	return nullptr;
+}
+
+// Note that builder only emits code right now, but will be set up later to generate code into something 
+
+// Generating LLVM code for expression nodes
+
+
+// In LLVM IR, numeric constants are represented with the ConstantFP class "Constant Floating Point"
+// CFP holds the value in an APFloat which itself is capable of holding floating point constants of arbitrary precision
+// THe above code just creates and returns a CFP
+Value *NumberExprAST::codegen() {
+	return ConstantFP::get(*TheContext, APFloat(Val));
+}
+
+
+// For now, we assume that the variable has already been emitted somewhere and its value is available
+
+Value *VariableExprAST::codegen() {
+	// Look this variable up in the symbol table  
+	Value *V = NamedValues[Name];
+	// If the variable does not exist (is not in the symbol table) then V will be null
+	if (!V)
+		LogErrorV("Unknown variable Name");
+	return V;
+}
+
+// Recursively emit code for LHS and RHS, then compute the result of the binary expression.
+// fcmp always returns an i1 (one bit integer), kaleidescope only recognizes doubles
+// So we combine fcmp with a uitofp (unsigned int to floating pont)
+Value *BinaryExprAST::codegen() {
+	Value *L = LHS->codegen();
+	Value *R = RHS->codegen();
+	if (!L || !R)
+		return nullptr;
+
+	switch (Op) {
+		case '+':
+			return Builder->CreateFAdd(L, R, "addtmp"); // IRBuilder knows where to insert the instruction
+		case '-':
+			return Builder->CreateFSub(L, R, "subtmp");
+		case '*':
+			return Builder->CreateFMul(L, R, "multmp");
+		case '<':
+			L = Builder->CreateFCmpULT(L, R, "cmptmp");
+			// Convert bool 0/1 to double 0.0 or 1.0
+			return Builder->CreateUIToFP(L, Type::getDoubleTy(*TheContext), "booltmp");
+		default:
+			return LogErrorV("invalid binary operator");
+	}
+}
+
+
+Value *CallExprAST::codegen() {
+	// Look up the name in the gloabl module table 
+	Function *CalleeF = TheModule->getFunction(Callee); // The module is the container that holds the functions
+	if (!CalleeF)
+		return LogErrorV("Unknown function referenced"); 
+	
+	// If argument mismatch error 
+	if (CalleeF->arg_size() != Args.size())
+		return LogErrorV("Incorrect # arguments passed"); // Kaleidescope only has one type, how would we check if the argument types match?
+	
+	std::vector<Value *> ArgsV;
+	for (unsigned i = 0, e = Args.size(); i != e; ++i) {
+		ArgsV.push_back(Args[i]->codegen()); // Recursively codegen each argument to be passed in
+		if (!ArgsV.back())
+			return nullptr;
+	}
+	
+	return Builder->CreateCall(CalleeF, ArgsV, "calltmp"); // create an LLVM call instruction. LLVM uses the C calling convention 
+														   // which allows us to call into stdlib functions like sin and cos with 
+														   // no additional overhead
+}
