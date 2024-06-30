@@ -161,7 +161,8 @@ class PrototypeAST {
 public:
 	PrototypeAST(const std::string &Name, const std::vector<std::string> Args) 
 		: Name(Name), Args(std::move(Args)) {}
-
+	
+	Function *codegen();
 	const std::string &getName() const { return Name; }
 };
 
@@ -176,6 +177,8 @@ class FunctionAST {
 public:
 	FunctionAST(std::unique_ptr<PrototypeAST> Proto, std::unique_ptr<ExprAST> Body) 
 		: Proto(std::move(Proto)), Body(std::move(Body)) {}
+
+	Function *codegen();
 };
 
 // CurTok/getNextToken - Provide a simple token buffer. CurTok is the current token 
@@ -573,4 +576,72 @@ Value *CallExprAST::codegen() {
 	return Builder->CreateCall(CalleeF, ArgsV, "calltmp"); // create an LLVM call instruction. LLVM uses the C calling convention 
 														   // which allows us to call into stdlib functions like sin and cos with 
 														   // no additional overhead
+}
+
+
+// Codegen for functions and prototypes
+
+// returns a function: a prototype represents the external interface for a function
+// How LLVM IR represents function declarations
+Function *PrototypeAST::codegen() {
+	// Make the function type 
+	std::vector<Type*> Doubles(Args.size(), Type::getDoubleTy(*TheContext));
+
+	FunctionType *FT = FunctionType::get(Type::getDoubleTy(*TheContext), Doubles, false); // creates a function type that takes N doubles as arguments
+																						  // returns one double as a result & is NOT vararg (takes a
+																						  // fixed # of arguments)
+	
+	Function *F = Function::Create(FT, Function::ExternalLinkage, Name, TheModule.get()); // Creates the IR function corresponding to the prototype
+																						  // External Linkage: callable by functions outside the module
+	
+	// Set names for all arguemnts 
+	unsigned Idx = 0;
+	for (auto &Arg : F->args())
+		Arg.setName(Args[Idx++]);
+	// makes IR more readable by keeping argument names consistent. 
+	
+	return F;
+}
+
+// Codegen for function body 
+Function *FunctionAST::codegen() {
+	// First, check for an existing function in TheModule's symbol for an extern declaration
+	Function *TheFunction = TheModule->getFunction(Proto->getName());
+	
+	if (!TheFunction) // if getFunction returns null, then we codegen a definition from the prototype
+		TheFunction = Proto->codegen();
+
+	// In either case, we assert that the function is empty (has no body)
+
+	if (!TheFunction)
+		return nullptr;
+
+	if (!TheFunction->empty())
+		return (Function*)LogErrorV("Function cannot be redefined");
+
+
+	// Create a new basic block to start insertion into 
+	BasicBlock *BB = BasicBlock::Create(*TheContext, "entry", TheFunction); // This is a 'basic block' which is inserted into TheFunction
+	Builder->SetInsertPoint(BB); // Tells the builder to insert new instructions at the end of the basic block
+								 // Basic blocks define the control flow graph of a function 
+
+	// Record the function arguments in the NamedValues map 
+	NamedValues.clear(); 
+	for (auto &Arg : TheFunction->args())
+		NamedValues[std::string(Arg.getName())] = &Arg;
+
+	if (Value *RetVal = Body->codegen()) {
+		// Finish off the function 
+		Builder->CreateRet(RetVal);
+		
+		// Validate the generated code, checking for consistency;
+		verifyFunction(*TheFunction);
+
+		return TheFunction;
+	}
+
+	// Error reading body, remove function 
+	TheFunction->eraseFromParent();
+	return nullptr;
+
 }
