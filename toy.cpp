@@ -1,3 +1,4 @@
+#include "KaleidescopeJIT.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/BasicBlock.h"
@@ -22,6 +23,7 @@
 
 
 using namespace llvm;
+using namespace llvm::orc;
 
 enum token {
 	tok_eof = -1,
@@ -425,6 +427,7 @@ static std::unique_ptr<IRBuilder<>> Builder; // helper that makes it easy to gen
 static std::unique_ptr<Module> TheModule; // Contains functions and global variables; Owns memory for all IR generated
 static std::map<std::string, Value *> NamedValues; // Keeps tracks of values defined in current scope and their LLVM representation 
 												   // Essentially a symbol table for the code
+static std::unique_ptr<KaleidoscopeJIT> TheJIT;
 
 Value *LogErrorV(const char *Str) {
 	LogError(Str);
@@ -571,10 +574,11 @@ Function *FunctionAST::codegen() {
 
 }
 
-static void InitializeModule() {
+static void InitializeModulesAndManagers(void) {
   // Open a new context and module.
   TheContext = std::make_unique<LLVMContext>();
-  TheModule = std::make_unique<Module>("my cool jit", *TheContext);
+  TheModule = std::make_unique<Module>("KaleidescopeJIT", *TheContext);
+  TheModule->setDataLayout(TheJIT->getDataLayout());
 
   // Create a new builder for the module.
   Builder = std::make_unique<IRBuilder<>>(*TheContext);
@@ -660,7 +664,7 @@ int main() {
   getNextToken();
 
   // Make the module, which holds all the code.
-  InitializeModule();
+  InitializeModulesAndManagers();
 
   // Run the main "interpreter loop" now.
   MainLoop();
