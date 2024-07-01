@@ -8,17 +8,29 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/StandardInstrumentations.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/Reassociate.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include <algorithm>
+#include <cassert>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <llvm-18/llvm/IR/Value.h>
+#include <llvm-18/llvm/Analysis/CGSCCPassManager.h>
+#include <llvm-18/llvm/Analysis/LoopAnalysisManager.h>
 #include <map>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 
@@ -428,6 +440,17 @@ static std::unique_ptr<Module> TheModule; // Contains functions and global varia
 static std::map<std::string, Value *> NamedValues; // Keeps tracks of values defined in current scope and their LLVM representation 
 												   // Essentially a symbol table for the code
 static std::unique_ptr<KaleidoscopeJIT> TheJIT;
+static std::unique_ptr<FunctionPassManager> TheFPM;
+static std::unique_ptr<LoopAnalysisManager> TheLAM;
+static std::unique_ptr<FunctionAnalysisManager> TheFAM;
+static std::unique_ptr<CGSCCAnalysisManager> TheCGAM;
+static std::unique_ptr<ModuleAnalysisManager> TheMAM;
+static std::unique_ptr<PassInstrumentationCallbacks> ThePIC;
+static std::unique_ptr<StandardInstrumentations> TheSI;
+static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
+static ExitOnError ExitOnErr;
+
+
 
 Value *LogErrorV(const char *Str) {
 	LogError(Str);
@@ -574,14 +597,49 @@ Function *FunctionAST::codegen() {
 
 }
 
+// 01/07/24: Adding function pass manager for optimization passes
 static void InitializeModulesAndManagers(void) {
-  // Open a new context and module.
-  TheContext = std::make_unique<LLVMContext>();
-  TheModule = std::make_unique<Module>("KaleidescopeJIT", *TheContext);
-  TheModule->setDataLayout(TheJIT->getDataLayout());
+	// Open a new context and module.
+	TheContext = std::make_unique<LLVMContext>();
+	TheModule = std::make_unique<Module>("KaleidescopeJIT", *TheContext);
+	TheModule->setDataLayout(TheJIT->getDataLayout());
 
-  // Create a new builder for the module.
-  Builder = std::make_unique<IRBuilder<>>(*TheContext);
+	// Create a new builder for the module.
+	Builder = std::make_unique<IRBuilder<>>(*TheContext);
+
+	// Create a new pass and analysis managers
+	TheFPM = std::make_unique<FunctionPassManager>();
+
+	// AnalysisManagers for 4 levels of the IR hierachy (Module, Function, Loop, Call Graph)
+	TheLAM = std::make_unique<LoopAnalysisManager>();
+	TheFAM = std::make_unique<FunctionAnalysisManager>();
+	TheCGAM = std::make_unique<CGSCCAnalysisManager>();
+	TheMAM = std::make_unique<ModuleAnalysisManager>();
+
+	// Pass instrumentation framework: allows us to customize what happens 
+	// between passes 
+	ThePIC = std::make_unique<PassInstrumentationCallbacks>();
+	TheSI = std::make_unique<StandardInstrumentations>(*TheContext, /*DebugLogging*/ true);
+
+	TheSI->registerCallbacks(*ThePIC, TheMAM.get());
+
+
+	// Add transform passes
+	// Standard cleanup optimizations, good starting point but can be extended (look into this)
+	// peephole and bit twiddling optzns
+	TheFPM->addPass(InstCombinePass());
+	// Reassociate expressions
+	TheFPM->addPass(ReassociatePass());
+	// Eliminate Common SubExpressions
+	TheFPM->addPass(GVNPass());
+	// Simplify the control flow graph (deleting unreachable blocks, etc)
+	TheFPM->addPass(SimplifyCFGPass());
+
+	// Register analysis passes used in these transform passes
+	PassBuilder PB;
+	PB.registerModuleAnalyses(*TheMAM);
+	PB.registerFunctionAnalyses(*TheFAM);
+	PB.crossRegisterProxies(*TheLAM, *TheFAM, *TheCGAM, *TheMAM);
 }
 
 static void HandleDefinition() {
