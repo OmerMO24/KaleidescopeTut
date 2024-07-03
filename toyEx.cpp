@@ -49,7 +49,12 @@ enum Token {
 
   // primary
   tok_identifier = -4,
-  tok_number = -5
+  tok_number = -5,
+
+  // Control flow 
+  tok_if = -6,
+  tok_then = -7,
+  tok_else = -8
 };
 
 static std::string IdentifierStr; // Filled in if tok_identifier
@@ -72,6 +77,12 @@ static int gettok() {
       return tok_def;
     if (IdentifierStr == "extern")
       return tok_extern;
+	if (IdentifierStr == "if")
+		return tok_if;
+	if (IdentifierStr == "then")
+		return tok_then;
+	if (IdentifierStr == "else")
+		return tok_else;
     return tok_identifier;
   }
 
@@ -164,6 +175,17 @@ public:
       : Callee(Callee), Args(std::move(Args)) {}
 
   Value *codegen() override;
+};
+
+// IfExprAST - Expression class for control flow statements 
+class IfExprAST : public ExprAST {
+	std::unique_ptr<ExprAST> Cond, Then, Else;
+
+public:
+	IfExprAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<ExprAST> Then, std::unique_ptr<ExprAST> Else) : 
+		Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {} 
+
+	Value *codegen() override;
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
