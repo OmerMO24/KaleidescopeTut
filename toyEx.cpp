@@ -558,6 +558,61 @@ Value *CallExprAST::codegen() {
   return Builder->CreateCall(CalleeF, ArgsV, "calltmp");
 }
 
+
+
+// codegen for if-then-else expressions
+Value *IfExprAST::codegen() {
+	Value *CondV = Cond->codegen(); // emit expression for the condiditon
+	if (!CondV) 
+		return nullptr;
+
+	// Compare condition to a bool by comparing non-equal to 0.0 
+	// Get T-Val as 1-bit bool value (1 for true, 0 for false obviously)
+	CondV = Builder->CreateFCmpONE(CondV, ConstantFP::get(*TheContext, APFloat(0.0)), "ifcond");
+
+	Function *TheFunction = Builder->GetInsertBlock()->getParent(); // Get current function being built
+																	// Ask for the current BB, then ask for its parent (the function it 'belongs to')
+
+	// Create blocks for the then and else cases. Insert the 'then' block at the end of the function
+	BasicBlock *ThenBB = BasicBlock::Create(*TheContext, "then", TheFunction); // by passing in the function to the constructor, it automatically inserts 
+																			   // the new block into the end of the specific function
+	BasicBlock *ElseBB = BasicBlock::Create(*TheContext, "else");
+	BasicBlock *MergeBB = BasicBlock::Create(*TheContext, "ifcont");
+	
+	// emit IR that chooses between the If and Else blocks
+	// Creates a path to the then block and then the else block (even though the else block still hasn't been inserted into the function)
+	Builder->CreateCondBr(CondV, ThenBB, ElseBB);
+
+	// Emit then value
+	Builder->SetInsertPoint(ThenBB);
+
+	Value *ThenV = Then->codegen(); // recursively call codegen on then expression
+	if (!ThenV)
+		return nullptr;
+
+	Builder->CreateBr(MergeBB); // create unconditional branch to the merge bock 
+								// In LLVM, all basic blocks have to be terminated 
+								// with a control flow expression like return or branch
+
+	// Codegen of 'Then' can change the current block. Update ThenBB for the Phi
+	ThenBB = Builder->GetInsertBlock(); // just get the current basic block
+
+	// Emit else block 
+	TheFunction->insert(TheFunction->end(), ElseBB); // Else block was created but not added to the function
+													 // So we insert it into the function here 
+	Builder->SetInsertPoint(ElseBB); 
+
+	Value *ElseV = Else->codegen();
+	if (!ElseV)
+		return nullptr;
+
+	Builder->CreateBr(MergeBB);
+	ElseBB = Builder->GetInsertBlock();
+
+}
+
+
+
 Function *PrototypeAST::codegen() {
   // Make the function type:  double(double,double) etc.
   std::vector<Type *> Doubles(Args.size(), Type::getDoubleTy(*TheContext));
@@ -610,6 +665,7 @@ Function *FunctionAST::codegen() {
   TheFunction->eraseFromParent();
   return nullptr;
 }
+
 
 //===----------------------------------------------------------------------===//
 // Top-Level parsing and JIT Driver
