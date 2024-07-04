@@ -177,7 +177,8 @@ public:
   Value *codegen() override;
 };
 
-// IfExprAST - Expression class for control flow statements 
+// IfExprAST - Expression class for control flow statements
+// The AST just has pointers to the various subexpressions
 class IfExprAST : public ExprAST {
 	std::unique_ptr<ExprAST> Cond, Then, Else;
 
@@ -313,20 +314,52 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   return std::make_unique<CallExprAST>(IdName, std::move(Args));
 }
 
+// ifexpr ::= 'if' expression 'then' expression 'else' expression
+static std::unique_ptr<ExprAST> ParseIfExpr() {
+	getNextToken(); // eat the if 
+	
+	// condition 
+	auto Cond = ParseExpression();
+	if (!Cond)
+		return nullptr;
+	
+	if (CurTok != tok_then)
+		return LogError("expected then");
+	getNextToken(); // eat the then 
+	
+	auto Then = ParseExpression();
+	if (!Then)
+		return nullptr;
+	
+	if (CurTok != tok_else)
+		return LogError("expected else");
+	
+	getNextToken();
+
+	auto Else = ParseExpression();
+	if (!Else)
+		return nullptr;
+
+	return std::make_unique<IfExprAST>(std::move(Cond), std::move(Then), std::move(Else));
+}
+
+
 /// primary
 ///   ::= identifierexpr
 ///   ::= numberexpr
 ///   ::= parenexpr
 static std::unique_ptr<ExprAST> ParsePrimary() {
-  switch (CurTok) {
-  default:
-    return LogError("unknown token when expecting an expression");
-  case tok_identifier:
-    return ParseIdentifierExpr();
-  case tok_number:
-    return ParseNumberExpr();
-  case '(':
-    return ParseParenExpr();
+	switch (CurTok) {
+	default:
+		return LogError("unknown token when expecting an expression");
+	case tok_identifier:
+		return ParseIdentifierExpr();
+	case tok_number:
+		return ParseNumberExpr();
+	case '(':
+		return ParseParenExpr();
+	case tok_if:
+		return ParseIfExpr();
   }
 }
 
@@ -430,6 +463,7 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
   getNextToken(); // eat extern.
   return ParsePrototype();
 }
+
 
 //===----------------------------------------------------------------------===//
 // Code Generation
