@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <llvm-18/llvm/IR/Instructions.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -607,8 +608,19 @@ Value *IfExprAST::codegen() {
 		return nullptr;
 
 	Builder->CreateBr(MergeBB);
+	// Similar to the then block, codegen of Else can change the current block 
+	// So we update the Phi node
 	ElseBB = Builder->GetInsertBlock();
 
+	// Emit merge block 
+	TheFunction->insert(TheFunction->end(), MergeBB);
+	Builder->SetInsertPoint(MergeBB);
+	PHINode *PN = Builder->CreatePHI(Type::getDoubleTy(*TheContext), 2, "iftmp");
+
+	PN->addIncoming(ThenV, ThenBB);
+	PN->addIncoming(ElseV, ElseBB);
+
+	return PN;
 }
 
 
