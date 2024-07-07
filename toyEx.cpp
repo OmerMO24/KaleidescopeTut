@@ -690,6 +690,84 @@ Value *IfExprAST::codegen() {
 	return PN;
 }
 
+Value *ForExprAST::codegen() {
+	// emit the start code first, without 'variable' in scope
+	Value *StartVal = Start->codegen();
+	if (!StartVal)
+		return nullptr;
+
+	// Make the new baisc block for the loop header, inserting after current block
+	Function *TheFunction = Builder->GetInsertBlock()->getParent();
+	BasicBlock *PreheaderBB = Builder->GetInsertBlock();
+	BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
+	
+	// Insert an explicit fall through from the current block to the LoopBB
+	Builder->CreateBr(LoopBB);
+
+	// Start insert point in LoopBB
+	Builder->SetInsertPoint(LoopBB);
+
+	// Start the PHI node with an entry for Start
+	PHINode *Variable = Builder->CreatePHI(Type::getDoubleTy(*TheContext), 2, VarName); 
+	Variable->addIncoming(StartVal, PreheaderBB);
+
+	// Within the loop, the variable is set equal to the PHI node
+	// If it overrides/shadows an existing variable, we have to restore it, so save it now
+	// THis also means our symbol table can now contain function arguments or loop variables.
+	// Shadowing of variables: Variable of the same name in outer scope. Remember variable we are shadowing.
+	Value *OldVal = NamedValues[VarName];
+	NamedValues[VarName] = Variable;
+
+	// Emit the IR for the body of the loop. Like other expressions, it can change the body of the current 
+	// BB. Ignore the value computer by the body, but don't allow for an error 
+	if (!Body->codegen()) // recursively codegen the body
+		return nullptr;
+
+	// Emit the step value 
+	Value *StepVal = nullptr;
+	if (Step) {
+		StepVal = Step->codegen();
+		if (!StepVal)
+			return nullptr;
+	} else {
+		// If not specified (since step value is not mandatory), use 1.0
+		StepVal = ConstantFP::get(*TheContext, APFloat(1.0));
+	}
+
+	Value *NextVar = Builder->CreateFAdd(Variable, StepVal, "nextvar"); // value of loop variable on next iteration of the loop
+	
+	// Compute the end condition
+	Value *EndCond = End->codegen();
+	if (!EndCond)
+		return nullptr;
+
+	// Convert condition to a bool by comparing non-equal to 0.0
+	EndCond = Builder->CreateFCmpONE(EndCond, ConstantFP::get(*TheContext, APFloat(0.0)), "loopcond");
+
+	// evaluate exit condition of the loop
+	// Create the "after loop" block and insert it 
+	BasicBlock *LoopEndBB = Builder->GetInsertBlock();
+	BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "afterloop", TheFunction);
+
+	// Insert the conditional branch into the end of LoopEndBB
+	Builder->CreateCondBr(EndCond, LoopBB, AfterBB);
+
+	// Any new code will be inserted in AfterBB
+	Builder->SetInsertPoint(AfterBB);
+
+	// Add a new entyr to the PHI node for the backedge 
+	Variable->addIncoming(NextVar, LoopEndBB);
+
+	// Restore the unshadowed variable 
+	if (OldVal)
+		NamedValues[VarName] = OldVal;
+	else
+		NamedValues.erase(VarName);
+
+	// for expr always returns 0.0
+	return Constant::getNullValue(Type::getDoubleTy(*TheContext));
+}
+
 
 
 Function *PrototypeAST::codegen() {
