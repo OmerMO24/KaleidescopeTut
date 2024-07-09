@@ -167,6 +167,17 @@ public:
   Value *codegen() override;
 };
 
+// UnaryExprAST - Expression calss for a unary operator
+// Exactly like the Binary operator AST, except for the fact that it only has one operand (one child)
+class UnaryExprAST : public ExprAST {
+	char Opcode;
+	std::unique_ptr<ExprAST> Operand;
+
+public:
+	UnaryExprAST(char Opcode, std::unique_ptr<ExprAST> Operand) : Opcode(Opcode), Operand(std::move(Operand)) {}
+	Value *codegen() override;
+};
+
 /// BinaryExprAST - Expression class for a binary operator.
 class BinaryExprAST : public ExprAST {
   char Op;
@@ -454,6 +465,22 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
   }
 }
 
+// unary 
+//  ::= primary 
+//  ::= '!' unary
+static std::unique_ptr<ExprAST> ParseUnary() {
+	// If the current token is not an operator, it must be a primary expression
+	if (!isascii(CurTok) || CurTok == '(' || CurTok == ',')
+		return ParsePrimary();
+
+	// If this is a unary operator, read it 
+	int Opc = CurTok;
+	getNextToken();
+	if (auto Operand = ParseUnary()) // recursively handle multiple consecutive unary operators
+		return std::make_unique<UnaryExprAST>(Opc, std::move(Operand));
+	return nullptr;
+}
+
 /// binoprhs
 ///   ::= ('+' primary)*
 static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
@@ -472,7 +499,7 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
     getNextToken(); // eat binop
 
     // Parse the primary expression after the binary operator.
-    auto RHS = ParsePrimary();
+    auto RHS = ParseUnary();
     if (!RHS)
       return nullptr;
 
@@ -495,7 +522,7 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 ///   ::= primary binoprhs
 ///
 static std::unique_ptr<ExprAST> ParseExpression() {
-  auto LHS = ParsePrimary();
+  auto LHS = ParseUnary();
   if (!LHS)
     return nullptr;
 
@@ -518,6 +545,15 @@ static std::unique_ptr<PrototypeAST> ParsePrototype() {
 	case tok_identifier:
 		FnName = IdentifierStr;
 		Kind = 0;
+		getNextToken();
+		break;
+	case tok_unary:
+		getNextToken();
+		if (!isascii(CurTok))
+			return LogErrorP("Expected unary operator");
+		FnName = "unary"; // identifies the operator as unary
+		FnName += (char)CurTok; // append the symbol for the operator 
+		Kind = 1; // identifies the kind of operator as unary 
 		getNextToken();
 		break;
 	case tok_binary:
@@ -637,6 +673,18 @@ Value *VariableExprAST::codegen() {
   if (!V)
     return LogErrorV("Unknown variable name");
   return V;
+}
+
+Value *UnaryExprAST::codegen() {
+	Value *OperandV = Operand->codegen();
+	if (!OperandV)
+		return nullptr;
+
+	Function *F = getFunction(std::string("unary") + Opcode);
+	if (!F)
+		return LogErrorV("Unknown Unary Operator"); // The operator doesn't exist in the symbol table
+	
+	return Builder->CreateCall(F, OperandV, "unop");
 }
 
 Value *BinaryExprAST::codegen() {
