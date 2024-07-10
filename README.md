@@ -1,3 +1,6 @@
+OK JUST COMPILE WITH RDYNAMIC TO MAKE SYMBOLS AVAILABLE FOR DYNAMIC LINKING 
+
+
 Hello Everyone who may or may not see this I am not sure if I am going to make this repo public or not.
 
 This is a little project called kaleidescope that implements a simple language called, as you guessed it, Kaledeiscope.
