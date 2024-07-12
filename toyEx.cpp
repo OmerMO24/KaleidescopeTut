@@ -812,74 +812,72 @@ Value *IfExprAST::codegen() {
 }
 
 Value *ForExprAST::codegen() {
-	// emit the start code first, without 'variable' in scope
+	Function *TheFunction = Builder->GetInsertBlock()->getParent();
+
+	// Create an alloca for the variable in the entry block 
+	AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, VarName);
+
+	// Emit the start code first, without 'variable' in scope
 	Value *StartVal = Start->codegen();
 	if (!StartVal)
 		return nullptr;
 
-	// Make the new baisc block for the loop header, inserting after current block
-	Function *TheFunction = Builder->GetInsertBlock()->getParent();
-	BasicBlock *PreheaderBB = Builder->GetInsertBlock();
+	// Store the value in the alloca 
+	Builder->CreateStore(StartVal, Alloca);
+
+	// Make the new basic block for the loop header, inserting after current block
 	BasicBlock *LoopBB = BasicBlock::Create(*TheContext, "loop", TheFunction);
-	
-	// Insert an explicit fall through from the current block to the LoopBB
+
+	// Insert an explicit fall through fromthe current block to the LoopBB
 	Builder->CreateBr(LoopBB);
 
-	// Start insert point in LoopBB
+	// Start insertion in LoopBB
 	Builder->SetInsertPoint(LoopBB);
+	
+	// Within in the loop, the variable is defined equal to the PHI node. If it shadows an 
+	// existing variable, we have to restore it, so save it for now.
+	AllocaInst *OldVal = NamedValues[VarName];
+	NamedValues[VarName] = Alloca;
 
-	// Start the PHI node with an entry for Start
-	PHINode *Variable = Builder->CreatePHI(Type::getDoubleTy(*TheContext), 2, VarName); 
-	Variable->addIncoming(StartVal, PreheaderBB);
-
-	// Within the loop, the variable is set equal to the PHI node
-	// If it overrides/shadows an existing variable, we have to restore it, so save it now
-	// THis also means our symbol table can now contain function arguments or loop variables.
-	// Shadowing of variables: Variable of the same name in outer scope. Remember variable we are shadowing.
-	Value *OldVal = NamedValues[VarName];
-	NamedValues[VarName] = Variable;
-
-	// Emit the IR for the body of the loop. Like other expressions, it can change the body of the current 
-	// BB. Ignore the value computer by the body, but don't allow for an error 
-	if (!Body->codegen()) // recursively codegen the body
+	// Emit the body of the loop. This like any other expr can change the curernt BB. Note that we ignore the value 
+	// computed by the body, but don't allow an error 
+	if (!Body->codegen())
 		return nullptr;
 
-	// Emit the step value 
+	// The step value isn't mandatory, so if it isnt specified then just use 1.0
 	Value *StepVal = nullptr;
 	if (Step) {
 		StepVal = Step->codegen();
 		if (!StepVal)
 			return nullptr;
 	} else {
-		// If not specified (since step value is not mandatory), use 1.0
+		// If not specified, use 1.0
 		StepVal = ConstantFP::get(*TheContext, APFloat(1.0));
 	}
 
-	Value *NextVar = Builder->CreateFAdd(Variable, StepVal, "nextvar"); // value of loop variable on next iteration of the loop
-	
-	// Compute the end condition
+	// Compute the end condition 
 	Value *EndCond = End->codegen();
 	if (!EndCond)
 		return nullptr;
 
-	// Convert condition to a bool by comparing non-equal to 0.0
+	// Reload, increment, and restore the alloca. This handles the case where the body of the loop
+	// mutates the variable
+	Value *CurVar = Builder->CreateLoad(Type::getDoubleTy(*TheContext), Alloca, VarName.c_str());
+	Value *NextVar = Builder->CreateFAdd(CurVar, StepVal, "nextvar");
+	Builder->CreateStore(NextVar, Alloca);
+
+	// Convert condition to a bool by comapring non-equal to 0.0
 	EndCond = Builder->CreateFCmpONE(EndCond, ConstantFP::get(*TheContext, APFloat(0.0)), "loopcond");
 
-	// evaluate exit condition of the loop
-	// Create the "after loop" block and insert it 
-	BasicBlock *LoopEndBB = Builder->GetInsertBlock();
+	// create the "after loop" block and insert it
 	BasicBlock *AfterBB = BasicBlock::Create(*TheContext, "afterloop", TheFunction);
 
-	// Insert the conditional branch into the end of LoopEndBB
+	// Insert teh conditional branch into the end of LoopEndBB
 	Builder->CreateCondBr(EndCond, LoopBB, AfterBB);
 
 	// Any new code will be inserted in AfterBB
 	Builder->SetInsertPoint(AfterBB);
 
-	// Add a new entyr to the PHI node for the backedge 
-	Variable->addIncoming(NextVar, LoopEndBB);
-
-	// Restore the unshadowed variable 
 	if (OldVal)
 		NamedValues[VarName] = OldVal;
 	else
