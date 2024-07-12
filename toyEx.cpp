@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <llvm-18/llvm/ADT/StringExtras.h>
+#include <llvm-18/llvm/ADT/StringRef.h>
 #include <llvm-18/llvm/IR/Instructions.h>
 #include <map>
 #include <memory>
@@ -631,7 +632,7 @@ static std::unique_ptr<PrototypeAST> ParseExtern() {
 static std::unique_ptr<LLVMContext> TheContext;
 static std::unique_ptr<Module> TheModule;
 static std::unique_ptr<IRBuilder<>> Builder;
-static std::map<std::string, Value *> NamedValues;
+static std::map<std::string, AllocaInst *> NamedValues;
 static std::unique_ptr<KaleidoscopeJIT> TheJIT;
 static std::unique_ptr<FunctionPassManager> TheFPM;
 static std::unique_ptr<LoopAnalysisManager> TheLAM;
@@ -661,6 +662,13 @@ Function *getFunction(std::string Name) {
 
   // If no existing prototype exists, return null.
   return nullptr;
+}
+
+// CreateEntryBlockAlloca - Create an alloca instruction in the entry block of 
+// the function. THis is ued for mutable variables, etc.
+static AllocaInst *CreateEntryBlockAlloca(Function *TheFunction, StringRef VarName) {
+	IRBuilder<> TmpB(&TheFunction->getEntryBlock(), TheFunction->getEntryBlock().begin());
+	return TmpB.CreateAlloca(Type::getDoubleTy(*TheContext), nullptr, VarName);
 }
 
 Value *NumberExprAST::codegen() {
