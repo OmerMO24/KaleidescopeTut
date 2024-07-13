@@ -928,8 +928,16 @@ Function *FunctionAST::codegen() {
 
   // Record the function arguments in the NamedValues map.
   NamedValues.clear();
-  for (auto &Arg : TheFunction->args())
-    NamedValues[std::string(Arg.getName())] = &Arg;
+  for (auto &Arg : TheFunction->args()) {
+	  // create an alloca for this variable 
+	  AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, Arg.getName());
+	  
+	  // Store the intial value into the alloca
+	  Builder->CreateStore(&Arg, Alloca);
+
+	  // add arguments to the variable symbol table
+	  NamedValues[std::string(Arg.getName())] = Alloca;
+  }
 
   if (Value *RetVal = Body->codegen()) {
     // Finish off the function.
