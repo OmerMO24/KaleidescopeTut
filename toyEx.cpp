@@ -166,6 +166,7 @@ public:
   VariableExprAST(const std::string &Name) : Name(Name) {}
 
   Value *codegen() override;
+  const std::string &getName() const {return Name; }
 };
 
 // UnaryExprAST - Expression calss for a unary operator
@@ -696,24 +697,46 @@ Value *UnaryExprAST::codegen() {
 }
 
 Value *BinaryExprAST::codegen() {
-  Value *L = LHS->codegen();
-  Value *R = RHS->codegen();
-  if (!L || !R)
-    return nullptr;
+	// Special case '=' because we don't want to emit the LHS as a an expression
+	if (Op == '=') {
+		// Assignment requires the LHS to be an identifier
+		// This assumes we're building without RTTI because LLVM builds that way by default.
+		// If building LLVM with RTTI this can be changed to a dynamic_cast for automatics error checking 
+		VariableExprAST *LHSE = static_cast<VariableExprAST *>(LHS.get());
+		if (!LHSE)
+			return LogErrorV("destination of '=' must be a variable");
+		// codegen the RHS
+		Value *Val = RHS->codegen();
+		if (!Val)
+			return nullptr;
 
-  switch (Op) {
-  case '+':
-    return Builder->CreateFAdd(L, R, "addtmp");
-  case '-':
-    return Builder->CreateFSub(L, R, "subtmp");
-  case '*':
-    return Builder->CreateFMul(L, R, "multmp");
-  case '<':
-    L = Builder->CreateFCmpULT(L, R, "cmptmp");
-    // Convert bool 0/1 to double 0.0 or 1.0
-    return Builder->CreateUIToFP(L, Type::getDoubleTy(*TheContext), "booltmp");
-  default:
-	break;
+		// Look up the name 
+		Value *Variable = NamedValues[LHSE->getName()];
+		if (!Variable)
+			return LogErrorV("Unknown variable name");
+
+		Builder->CreateStore(Val, Variable);
+		return Val;
+	}	
+
+    Value *L = LHS->codegen();
+    Value *R = RHS->codegen();
+    if (!L || !R)
+      return nullptr;
+
+    switch (Op) {
+    case '+':
+      return Builder->CreateFAdd(L, R, "addtmp");
+    case '-':
+      return Builder->CreateFSub(L, R, "subtmp");
+    case '*':
+      return Builder->CreateFMul(L, R, "multmp");
+    case '<':
+      L = Builder->CreateFCmpULT(L, R, "cmptmp");
+      // Convert bool 0/1 to double 0.0 or 1.0
+      return Builder->CreateUIToFP(L, Type::getDoubleTy(*TheContext), "booltmp");
+    default:
+	  break;
   }
 
   // If it wasnt a builtin binary operator, it must be a user defined one. Emit a 
@@ -927,6 +950,8 @@ Function *FunctionAST::codegen() {
   Builder->SetInsertPoint(BB);
 
   // Record the function arguments in the NamedValues map.
+  // For every arg, create an alloca, store the input value to the function into the alloca, 
+  // register the alloca as the memory location for the argument
   NamedValues.clear();
   for (auto &Arg : TheFunction->args()) {
 	  // create an alloca for this variable 
@@ -945,15 +970,18 @@ Function *FunctionAST::codegen() {
 
     // Validate the generated code, checking for consistency.
     verifyFunction(*TheFunction);
-
-    // Run the optimizer on the function.
-    TheFPM->run(*TheFunction, *TheFAM);
+	
+	// Run the optimizer on the function 
+	TheFPM->run(*TheFunction, *TheFAM);
 
     return TheFunction;
   }
 
   // Error reading body, remove function.
   TheFunction->eraseFromParent();
+
+  if (P.isBinaryOp())
+	  BinopPrecedence.erase(P.getOperatorName());
   return nullptr;
 }
 
@@ -1114,6 +1142,7 @@ int main() {
 
   // Install standard binary operators.
   // 1 is lowest precedence.
+  BinopPrecedence['='] = 2;
   BinopPrecedence['<'] = 10;
   BinopPrecedence['+'] = 20;
   BinopPrecedence['-'] = 20;
