@@ -63,7 +63,10 @@ enum Token {
 
   // operators
   tok_binary = -11,
-  tok_unary = -12
+  tok_unary = -12,
+
+  // var definition 
+  tok_var = -13
 };
 
 static std::string IdentifierStr; // Filled in if tok_identifier
@@ -100,6 +103,8 @@ static int gettok() {
 		return tok_binary;
 	if (IdentifierStr == "unary")
 		return tok_unary;
+	if (IdentifierStr == "var")
+		return tok_var;
     return tok_identifier;
   }
 
@@ -226,6 +231,18 @@ class ForExprAST : public ExprAST {
 public:
 	ForExprAST(const std::string &VarName, std::unique_ptr<ExprAST> Start, std::unique_ptr<ExprAST> End, std::unique_ptr<ExprAST> Step, std::unique_ptr<ExprAST> Body) :
 		VarName(VarName), Start(std::move(Start)), End(std::move(End)), Step(std::move(Step)), Body(std::move(Body)) {}
+
+	Value *codegen() override;
+};
+
+// VarExprAST - Expression calss for var/in
+class VarExprAST : public ExprAST {
+	std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+	std::unique_ptr<ExprAST> Body;
+
+public:
+	VarExprAST(std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames, 
+			std::unique_ptr<ExprAST> Body) : VarNames(std::move(VarNames)), Body(std::move(Body)) {}
 
 	Value *codegen() override;
 };
@@ -678,10 +695,12 @@ Value *NumberExprAST::codegen() {
 
 Value *VariableExprAST::codegen() {
   // Look this variable up in the function.
-  Value *V = NamedValues[Name];
-  if (!V)
-    return LogErrorV("Unknown variable name");
-  return V;
+  AllocaInst *A = NamedValues[Name];
+  if (!A)
+	  return LogErrorV("unknown variable name");
+
+  // Load the value 
+  return Builder->CreateLoad(A->getAllocatedType(), A, Name.c_str());
 }
 
 Value *UnaryExprAST::codegen() {
