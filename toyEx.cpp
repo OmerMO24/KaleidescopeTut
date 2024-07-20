@@ -32,6 +32,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace llvm;
@@ -461,12 +462,66 @@ static std::unique_ptr<ExprAST> ParseForExpr() {
 
 }
 
+
+// varexpr ::= 'var' identifier ('=' expression)? 
+//					(',' identifier ('=' expression)?)* 'in' expression
+static std::unique_ptr<ExprAST> ParseVarExpr() {
+	getNextToken(); // eat the var
+	
+	std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+	
+	// At least one variable name is required
+	if (CurTok != tok_identifier)
+		return LogError("expected identifier after var");
+	
+	// parse list of identifer/expr pairs into the VarNames vector
+	while (true) {
+		std::string Name = IdentifierStr;
+		getNextToken(); // eat identifier
+
+		// Read the optional initializer
+		std::unique_ptr<ExprAST> Init = nullptr;
+		if (CurTok == '=') {
+			getNextToken(); // eat the =
+
+			Init = ParseExpression();
+			if (!Init)
+				return nullptr;
+		}
+
+		VarNames.push_back(std::make_pair(Name, std::move(Init)));
+
+		// End of var list, exit loop
+		if (CurTok != ',')
+			break;
+		getNextToken(); // eat the ','
+
+		if (CurTok != tok_identifier)
+			return LogError("expected identifier list after var");
+	}
+
+	// Once all the variables are parsed, we parse the body and create the AST node
+	// At this point we have to have 'in'
+	if (CurTok != tok_in)
+		return LogError("Expected 'in' keyword after 'var'");
+	getNextToken(); // eat 'in'
+	
+	auto Body = ParseExpression();
+	if (!Body)
+		return nullptr;
+
+	return std::make_unique<VarExprAST>(std::move(VarNames), std::move(Body));
+	
+}
+
+
 /// primary
 ///   ::= identifierexpr
 ///   ::= numberexpr
 ///   ::= parenexpr
 ///   ::= ifexpr
 ///   ::= forexpr
+///   ::= varexpr
 static std::unique_ptr<ExprAST> ParsePrimary() {
 	switch (CurTok) {
 	default:
@@ -481,6 +536,8 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
 		return ParseIfExpr();
 	case tok_for:
 		return ParseForExpr();
+	case tok_var:
+		return ParseVarExpr();
   }
 }
 
