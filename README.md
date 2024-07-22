@@ -35,3 +35,6 @@ signed, 0x776982.
 
 # Update on 2/7/2024
 So as usual, things don't always go your way. After going through the chapter for JIT'ing the IR, I kept running into segFaults that I couldn't seem to fix. LLVM's documentation is weird in that the code that they show in their explanations does not match the official code listing shown at the end of every chapter. To maximize my time learning, i've already taken notes on all the new implementation done in the JIT chapter, and will continue working on the code listing from LLVM's website rather than my own (All of the code up to the JIT chapter is literally the exact same, just reorganized in a cleaner more concise way, so its like Im using my version). However, I will take some time out to figure out where I messed up in my own copy, which should just be an aboslute blast don't we love seg faults, im jk major skill issue from me. However, we push on. QOTD: "To be knowledgeable is to realize how little knowledge you have"
+
+# Update on 22/7/2024
+I've done the last 3 weeks basically doing nothing when I could've finsihed it in 3 days, but its ok. This is a test commit from my new arch linux machine. I've completed kaleidoscope, and will start TERSE soon, hopefully. Terse will be made in conjunction with a tinygrad equivalent but in zig. Doable inshallah. Hello from arch!
