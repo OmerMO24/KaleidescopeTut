@@ -26,9 +26,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <llvm-18/llvm/ADT/StringExtras.h>
-#include <llvm-18/llvm/ADT/StringRef.h>
-#include <llvm-18/llvm/IR/Instructions.h>
+#include <llvm/ADT/StringExtras.h>
+#include <llvm/ADT/StringRef.h>
+#include <llvm/IR/Instructions.h>
 #include <map>
 #include <memory>
 #include <string>
