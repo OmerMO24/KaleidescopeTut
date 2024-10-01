@@ -107,7 +107,7 @@ static int gettok()
 
 
 
-// We are using recursive descen parsing where every function/object represents a non-terminal from our grammar (fuck you PLD)
+// We are using recursive descen parsing where every function/object represents a non-terminal from our grammar 
 // ExprAST - Base class for all expression nodes
 // Includes virtual codegen methods
 // The Value class represents an SSA register they're cool check them out.
